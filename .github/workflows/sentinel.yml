@@ -1,0 +1,40 @@
+name: Cloud Sentinel
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore Sentinel State Cache
+        uses: actions/cache@v4
+        with:
+          path: .sentinel_state.json
+          key: sentinel-state-${{ github.run_id }}
+          restore-keys: |
+            sentinel-state-
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Sentinel (One Shot)
+        env:
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+          MOCK_ETF_FLOW: ${{ secrets.MOCK_ETF_FLOW }}
+        run: |
+          python main.py --mode sentinel --push --once

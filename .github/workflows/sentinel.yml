@@ -34,7 +34,7 @@ jobs:
         env:
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+          WECOM_WEBHOOK_URL: ${{ secrets.SERVERCHAN_SENDKEY }}
           MOCK_ETF_FLOW: ${{ secrets.MOCK_ETF_FLOW }}
         run: |
           python main.py --mode sentinel --push --once

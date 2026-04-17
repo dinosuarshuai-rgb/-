@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import time
 from statistics import mean
 from contextlib import redirect_stderr, redirect_stdout
 from typing import Dict, List, Literal, Optional, Tuple, Union
@@ -57,32 +58,30 @@ class MacroDecisionEngine:
 
     def _fetch_btc_realtime_and_ma(self) -> Tuple[float, float, float]:
         try:
-            import ccxt  # type: ignore
+            import yfinance as yf  # type: ignore
         except ImportError as exc:
-            raise RuntimeError("未安装 ccxt，无法抓取 Binance 实时行情。请先执行: pip install ccxt") from exc
+            raise RuntimeError("未安装 yfinance，无法抓取雅虎财经数据。请先执行: pip install yfinance") from exc
 
-        exchange = ccxt.binance(
-            {
-                "enableRateLimit": True,
-                "options": {"defaultType": "spot"},
-            }
-        )
-        try:
-            ticker = exchange.fetch_ticker("BTC/USDT")
-        except Exception as exc:
-            raise RuntimeError(f"ccxt 抓取 Binance 现价失败：{exc}") from exc
-        price = self._safe_float(ticker.get("last") or ticker.get("close"))
-        if price <= 0:
-            raise RuntimeError("ccxt 获取 BTC/USDT 实时价格失败。")
-
-        try:
-            rows_4h = exchange.fetch_ohlcv("BTC/USDT", timeframe="4h", limit=20)
-            rows_1d = exchange.fetch_ohlcv("BTC/USDT", timeframe="1d", limit=20)
-        except Exception as exc:
-            raise RuntimeError(f"ccxt 抓取 Binance K 线失败：{exc}") from exc
-        ma20_4h = self._sma20_from_ohlcv(rows_4h)
-        ma20_1d = self._sma20_from_ohlcv(rows_1d)
-        return price, ma20_4h, ma20_1d
+        btc = yf.Ticker("BTC-USD")
+        last_error: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    data = btc.history(period="100d", interval="1d")
+                close = data.get("Close")
+                if close is None or close.dropna().empty:
+                    raise RuntimeError("雅虎财经返回 BTC-USD 数据为空。")
+                close = close.dropna()
+                current_price = float(close.iloc[-1])
+                ma20 = float(close.tail(20).mean())
+                return current_price, ma20, ma20
+            except Exception as e:
+                last_error = e
+                if e.__class__.__name__ == "YFRateLimitError" and attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                break
+        raise RuntimeError(f"雅虎财经抓取失败: {last_error}") from last_error
 
     @staticmethod
     def _yfinance_intraday_last_and_change(symbol: str) -> Tuple[float, float]:

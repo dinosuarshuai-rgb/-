@@ -1,0 +1,6 @@
+.env
+.sentinel_state.json
+sentinel.log
+__pycache__/
+*.pyc
+.DS_Store

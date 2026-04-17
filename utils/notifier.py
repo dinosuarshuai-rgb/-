@@ -39,7 +39,7 @@ def _find_first(text: str, pattern: str) -> Optional[str]:
 
 
 def send_wechat(report_md: str) -> bool:
-    sendkey = os.getenv("SERVERCHAN_SENDKEY", "").strip()
+    sendkey = (os.getenv("SERVERCHAN_SENDKEY") or os.getenv("WECOM_WEBHOOK_URL") or "").strip()
     if not sendkey:
         return False
 

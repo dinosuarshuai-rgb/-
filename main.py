@@ -60,10 +60,11 @@ def fast_scan(query: str) -> tuple[bool, dict]:
     engine = MacroDecisionEngine()
     oil_change = 0.0
     dxy_change = 0.0
+    macro_fetch_error: str | None = None
     try:
         oil_change, dxy_change = engine.fetch_macro_quick()
-    except Exception:
-        pass
+    except Exception as exc:
+        macro_fetch_error = str(exc)
 
     agent = MacroAgent(config=MacroAgentConfig(enable_deepseek=False))
     intel = agent.fast_scan(query=query, now=_utcnow())
@@ -74,10 +75,12 @@ def fast_scan(query: str) -> tuple[bool, dict]:
     state = _load_state()
     last_full = state.get("last_full_analysis_utc")
     time_trigger = True
+    hours_since_last_full: float | None = None
     if isinstance(last_full, str):
         try:
             last_dt = datetime.fromisoformat(last_full.replace("Z", "+00:00"))
-            time_trigger = (_utcnow() - last_dt).total_seconds() >= 4 * 3600
+            hours_since_last_full = (_utcnow() - last_dt).total_seconds() / 3600.0
+            time_trigger = hours_since_last_full >= 4.0
         except Exception:
             time_trigger = True
 
@@ -88,6 +91,11 @@ def fast_scan(query: str) -> tuple[bool, dict]:
         "time_trigger": time_trigger,
         "oil_change_pct": oil_change,
         "dxy_change_pct": dxy_change,
+        "macro_fetch_error": macro_fetch_error,
+        "news_count": len(titles),
+        "news_sample": titles[:5],
+        "last_full_analysis_utc": last_full,
+        "hours_since_last_full": hours_since_last_full,
     }
     return triggered, meta
 
@@ -159,9 +167,33 @@ def sentinel_loop(query: str, interval_sec: int, push: bool) -> None:
         time.sleep(max(5, int(interval_sec)))
 
 
+def push_test() -> None:
+    report = "\n".join(
+        [
+            "# 💎 MacroEvent_Quant_V1 中文研报（推送测试）",
+            "",
+            f"- 生成时间：{_utcnow().isoformat().replace('+00:00', 'Z')}",
+            "- 查询主题：推送测试",
+            "",
+            "## 结论摘要",
+            "",
+            "- 宏观模式 (Regime)：**NEUTRAL**",
+            "- 交易信号：**NO_TRADE**",
+            "- 三层验证后确定性信心度：**0%**",
+            "",
+            "## 情报详情",
+            "",
+            "- TestSource: 这是一次微信推送测试 (https://example.com) （刚刚抓取）",
+            "",
+        ]
+    )
+    ok = send_wechat(report)
+    print(json.dumps({"push_ok": ok}, ensure_ascii=False))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["fast_scan", "full_analysis", "sentinel"], default="full_analysis")
+    parser.add_argument("--mode", choices=["fast_scan", "full_analysis", "sentinel", "push_test"], default="full_analysis")
     parser.add_argument("--query", default="Iran geopolitical news latest escalation sanctions oil shipping")
     parser.add_argument("--interval", type=int, default=300)
     parser.add_argument("--push", action="store_true")
@@ -173,6 +205,10 @@ def main() -> None:
     if args.mode == "fast_scan":
         triggered, meta = fast_scan(args.query)
         print(json.dumps({"triggered": triggered, "meta": meta}, ensure_ascii=False))
+        return
+
+    if args.mode == "push_test":
+        push_test()
         return
 
     if args.mode == "sentinel":

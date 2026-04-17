@@ -1,3 +1,2 @@
 pydantic
-ccxt
-yfinance
+requests

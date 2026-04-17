@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import io
 import json
 import os
 import re
-import time
-from statistics import mean
-from contextlib import redirect_stderr, redirect_stdout
 from typing import Dict, List, Literal, Optional, Tuple, Union
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -50,139 +46,55 @@ class MacroDecisionEngine:
             return default
 
     @staticmethod
-    def _sma20_from_ohlcv(rows: List[List[float]]) -> float:
-        closes = [float(r[4]) for r in rows if len(r) >= 5]
-        if len(closes) < 20:
-            raise RuntimeError("Binance OHLCV 数据不足，无法计算 MA20。")
-        return float(mean(closes[-20:]))
+    def _stooq_last_prev(symbol: str) -> Tuple[float, float]:
+        import requests
+
+        url = f"https://stooq.com/q/?s={symbol}"
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+        text = resp.text
+
+        sym = symbol.lower()
+        m_prev = re.search(rf"id=aq_{re.escape(sym)}_p>([0-9]+(?:\.[0-9]+)?)<", text)
+        m_last = (
+            re.search(rf"id=aq_{re.escape(sym)}_c3>([0-9]+(?:\.[0-9]+)?)<", text)
+            or re.search(rf"id=aq_{re.escape(sym)}_c2\\|3>([0-9]+(?:\.[0-9]+)?)<", text)
+            or re.search(rf"id=aq_{re.escape(sym)}_c2>([0-9]+(?:\.[0-9]+)?)<", text)
+        )
+        if not m_last or not m_prev:
+            raise RuntimeError(f"Stooq 解析失败：{symbol} 找不到 last/prev 字段。")
+        return float(m_last.group(1)), float(m_prev.group(1))
 
     def _fetch_btc_realtime_and_ma(self) -> Tuple[float, float, float]:
-        try:
-            import yfinance as yf  # type: ignore
-        except ImportError as exc:
-            raise RuntimeError("未安装 yfinance，无法抓取雅虎财经数据。请先执行: pip install yfinance") from exc
+        import requests
 
-        btc = yf.Ticker("BTC-USD")
-        last_error: Optional[Exception] = None
-        for attempt in range(3):
-            try:
-                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                    data = btc.history(period="100d", interval="1d")
-                close = data.get("Close")
-                if close is None or close.dropna().empty:
-                    raise RuntimeError("雅虎财经返回 BTC-USD 数据为空。")
-                close = close.dropna()
-                current_price = float(close.iloc[-1])
-                ma20 = float(close.tail(20).mean())
-                return current_price, ma20, ma20
-            except Exception as e:
-                last_error = e
-                if e.__class__.__name__ == "YFRateLimitError" and attempt < 2:
-                    time.sleep(2 * (attempt + 1))
-                    continue
-                break
-        raise RuntimeError(f"雅虎财经抓取失败: {last_error}") from last_error
+        url = "https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT"
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        payload = resp.json()
 
-    @staticmethod
-    def _yfinance_intraday_last_and_change(symbol: str) -> Tuple[float, float]:
-        import yfinance as yf  # type: ignore
+        data = payload.get("data")
+        last = None
+        if isinstance(data, list) and data:
+            last = data[0].get("last")
 
-        ticker = yf.Ticker(symbol)
+        if last is None:
+            raise RuntimeError("OKX 返回数据缺少 last 字段。")
 
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            daily = ticker.history(period="5d", interval="1d")
-        if daily.empty:
-            raise RuntimeError(f"yfinance 未返回 {symbol} 日线数据。")
-        daily_close = daily["Close"].dropna()
-        if daily_close.empty:
-            raise RuntimeError(f"yfinance 返回 {symbol} 日线收盘价为空。")
-        if len(daily_close) >= 2:
-            prev_close = float(daily_close.iloc[-2])
-        else:
-            prev_close = float(daily_close.iloc[-1])
-
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            intraday = ticker.history(period="1d", interval="5m")
-        if intraday.empty or intraday.get("Close") is None:
-            last_price = float(daily_close.iloc[-1])
-        else:
-            intraday_close = intraday["Close"].dropna()
-            if intraday_close.empty:
-                last_price = float(daily_close.iloc[-1])
-            else:
-                last_price = float(intraday_close.iloc[-1])
-
-        if prev_close == 0:
-            return last_price, 0.0
-        return last_price, ((last_price - prev_close) / prev_close) * 100.0
-
-    @classmethod
-    def _yfinance_intraday_change_pct(cls, symbol: str) -> float:
-        _, change = cls._yfinance_intraday_last_and_change(symbol)
-        return change
+        last_price = float(last)
+        return last_price, last_price, last_price
 
     def _fetch_macro_changes(self) -> Tuple[float, float]:
-        try:
-            oil_change = self._yfinance_intraday_change_pct("CL=F")
-        except Exception as exc:
-            raise RuntimeError(f"yfinance 抓取 CL=F 失败: {exc}") from exc
-
-        dxy_symbols = ["DX-Y.NYB", "DX-Y"]
-        last_error: Optional[Exception] = None
-        for symbol in dxy_symbols:
-            try:
-                dxy_change = self._yfinance_intraday_change_pct(symbol)
-                return oil_change, dxy_change
-            except Exception as exc:
-                last_error = exc
-        raise RuntimeError(f"yfinance 抓取美元指数失败: {last_error}")
-
-    def _fetch_tnx_from_stooq(self) -> Tuple[float, float]:
-        try:
-            with urlopen("https://stooq.com/q/d/l/?s=10yusy.b&i=d", timeout=20) as resp:
-                csv_text = resp.read().decode("utf-8", errors="ignore")
-        except (HTTPError, URLError, TimeoutError) as exc:
-            raise RuntimeError(f"Stooq 抓取 10YUSY.B 失败: {exc}") from exc
-
-        lines = [ln.strip() for ln in csv_text.splitlines() if ln.strip()]
-        if len(lines) < 3:
-            raise RuntimeError("Stooq 10YUSY.B 数据不足，无法计算涨跌幅。")
-
-        header = lines[0].lower().split(",")
-        try:
-            close_idx = header.index("close")
-        except ValueError:
-            close_idx = 4
-
-        def _close_from_line(line: str) -> float:
-            parts = line.split(",")
-            return float(parts[close_idx])
-
-        last_close = _close_from_line(lines[-1])
-        prev_close = _close_from_line(lines[-2])
-        if prev_close == 0:
-            return last_close, 0.0
-        change_pct = ((last_close - prev_close) / prev_close) * 100.0
-        return last_close, change_pct
+        oil_last, oil_prev = self._stooq_last_prev("CL.F")
+        dxy_last, dxy_prev = self._stooq_last_prev("DX.F")
+        oil_change = 0.0 if oil_prev == 0 else ((oil_last - oil_prev) / oil_prev) * 100.0
+        dxy_change = 0.0 if dxy_prev == 0 else ((dxy_last - dxy_prev) / dxy_prev) * 100.0
+        return float(oil_change), float(dxy_change)
 
     def _fetch_tnx(self) -> Tuple[float, float]:
-        try:
-            last, change = self._yfinance_intraday_last_and_change("^TNX")
-            if last <= 0:
-                raise RuntimeError("yfinance 返回 ^TNX 价格异常。")
-            return last, change
-        except Exception:
-            try:
-                last, change = self._fetch_tnx_from_stooq()
-                self.last_warnings.append("10年期美债收益率：^TNX 获取失败，已切换到 Stooq(10YUSY.B)。")
-                return last, change
-            except Exception:
-                try:
-                    _, tlt_change = self._yfinance_intraday_last_and_change("TLT")
-                    self.last_warnings.append("10年期美债收益率：已使用 TLT 反向波动作为代理。")
-                    return 0.0, -tlt_change
-                except Exception as exc:
-                    raise RuntimeError(f"10年期美债收益率获取失败（^TNX/Stooq/TLT均不可用）: {exc}") from exc
+        last, prev = self._stooq_last_prev("10YUSY.B")
+        change_pct = 0.0 if prev == 0 else ((last - prev) / prev) * 100.0
+        return float(last), float(change_pct)
 
     @staticmethod
     def _parse_usm_token(token: str) -> Optional[float]:
@@ -555,23 +467,13 @@ class MacroDecisionEngine:
             }
 
         try:
-            import ccxt  # type: ignore
-        except ImportError:
-            return {
-                "geo_score_adjusted": geo_score,
-                "applied": False,
-                "move_pct_2h": 0.0,
-                "directional_move_pct_2h": 0.0,
-            }
+            import requests
 
-        exchange = ccxt.binance(
-            {
-                "enableRateLimit": True,
-                "options": {"defaultType": "spot"},
-            }
-        )
-        try:
-            rows = exchange.fetch_ohlcv("BTC/USDT", timeframe="5m", limit=48)
+            url = "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=5m&limit=48"
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            payload = resp.json()
+            rows = payload.get("data") or []
         except Exception:
             return {
                 "geo_score_adjusted": geo_score,
@@ -580,7 +482,13 @@ class MacroDecisionEngine:
                 "directional_move_pct_2h": 0.0,
             }
 
-        closes = [float(r[4]) for r in rows if len(r) >= 5]
+        closes: List[float] = []
+        for r in rows:
+            if isinstance(r, (list, tuple)) and len(r) >= 5:
+                try:
+                    closes.append(float(r[4]))
+                except Exception:
+                    continue
         if len(closes) < 2:
             return {
                 "geo_score_adjusted": geo_score,

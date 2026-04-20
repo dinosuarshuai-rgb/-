@@ -185,7 +185,7 @@ def _heuristic_geo_score(text: str) -> float:
 class TavilySearchParams:
     query: str
     topic: Literal["general", "news"] = "news"
-    search_depth: Literal["basic", "advanced"] = "basic"
+    search_depth: Literal["basic", "advanced"] = "advanced"
     max_results: int = 5
     time_range: Optional[str] = None
     include_domains: Optional[List[str]] = None
@@ -227,7 +227,9 @@ class TavilyClient:
             return []
 
         items: List[NewsItem] = []
-        for r in data.get("results", []) or []:
+        results = data.get("results", []) or []
+        print(f"DEBUG: Raw news count from Tavily: {len(results)}")
+        for r in results:
             title = (r.get("title") or "").strip()
             link = (r.get("url") or "").strip()
             content = r.get("content")
@@ -522,7 +524,7 @@ class MacroAgent:
         params = TavilySearchParams(
             query=query,
             topic="general",
-            search_depth="basic",
+            search_depth="advanced",
             max_results=self.config.max_results_per_tier,
             time_range="day",
             include_domains=["x.com", "twitter.com"],
@@ -535,7 +537,7 @@ class MacroAgent:
         params = TavilySearchParams(
             query=query,
             topic="news",
-            search_depth="basic",
+            search_depth="advanced",
             max_results=self.config.max_results_per_tier,
             time_range="day",
             include_domains=["reuters.com", "bloomberg.com"],
@@ -548,7 +550,7 @@ class MacroAgent:
         params = TavilySearchParams(
             query=query,
             topic="news",
-            search_depth="basic",
+            search_depth="advanced",
             max_results=self.config.max_results_per_tier,
             time_range="day",
             include_domains=["apnews.com", "aljazeera.com"],
@@ -583,6 +585,7 @@ class MacroAgent:
         )
 
     def _split_scoring_background(self, items: List[NewsItem], now: datetime) -> Tuple[List[NewsItem], List[NewsItem]]:
+        now = _to_utc(now)
         scoring: List[NewsItem] = []
         background: List[NewsItem] = []
         for i in items:

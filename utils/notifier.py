@@ -52,11 +52,17 @@ def send_wechat(report_md: str) -> bool:
         parts.append(f"- 交易信号：{signal or 'N/A'}")
         parts.append(f"- 宏观模式：{regime or 'N/A'}")
         parts.append(f"- 确定性信心度：{confidence or 'N/A'}")
+    parts.append("")
+    parts.append("TOP3 情报：")
     if top3:
-        parts.append("")
-        parts.append("TOP3 情报：")
         parts.extend([f"- {x}" for x in top3])
-    desp = "\n".join(parts) if parts else report_md[:1500]
+    else:
+        parts.append("- 未发现符合条件的实时新闻")
+
+    desp = "\n".join(parts) if any(p.strip() for p in parts) else "无有效内容"
+    max_len = 1800
+    if len(desp) > max_len:
+        desp = desp[: max_len - 10] + "…(已截断)"
 
     url = f"https://sctapi.ftqq.com/{sendkey}.send"
     payload = urlencode({"title": title, "desp": desp}).encode("utf-8")

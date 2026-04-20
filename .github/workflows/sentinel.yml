@@ -37,4 +37,7 @@ jobs:
           WECOM_WEBHOOK_URL: ${{ secrets.SERVERCHAN_SENDKEY }}
           MOCK_ETF_FLOW: ${{ secrets.MOCK_ETF_FLOW }}
         run: |
+          echo "Checking environment keys..." && [ -n "$TAVILY_API_KEY" ] && echo "Tavily Key is set" || echo "Tavily Key is MISSING"
+          echo "Checking environment keys..." && [ -n "$DEEPSEEK_API_KEY" ] && echo "DeepSeek Key is set" || echo "DeepSeek Key is MISSING"
+          echo "Checking environment keys..." && [ -n "$WECOM_WEBHOOK_URL" ] && echo "ServerChan Key is set" || echo "ServerChan Key is MISSING"
           python main.py --mode sentinel --push --once

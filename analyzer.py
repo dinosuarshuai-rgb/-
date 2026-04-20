@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import os
 import re
+import time
 from typing import Dict, List, Literal, Optional, Tuple, Union
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -68,21 +69,47 @@ class MacroDecisionEngine:
     def _fetch_btc_realtime_and_ma(self) -> Tuple[float, float, float]:
         import requests
 
-        url = "https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT"
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        payload = resp.json()
+        okx_url = "https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT"
+        last_error: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                resp = requests.get(
+                    okx_url,
+                    timeout=10,
+                    headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+                data = payload.get("data")
+                last = data[0].get("last") if isinstance(data, list) and data else None
+                if last is None:
+                    raise RuntimeError("OKX 返回数据缺少 last 字段。")
+                last_price = float(last)
+                return last_price, last_price, last_price
+            except Exception as exc:
+                last_error = exc
+                time.sleep(0.8 * (attempt + 1))
 
-        data = payload.get("data")
-        last = None
-        if isinstance(data, list) and data:
-            last = data[0].get("last")
-
-        if last is None:
-            raise RuntimeError("OKX 返回数据缺少 last 字段。")
-
-        last_price = float(last)
-        return last_price, last_price, last_price
+        try:
+            # 备用源：CoinGecko 简单价格接口
+            cg_url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+            resp = requests.get(cg_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            resp.raise_for_status()
+            payload = resp.json()
+            last_price = float(payload["bitcoin"]["usd"])
+            self.last_warnings.append("OKX 价格拉取失败，已切换 CoinGecko 备用源。")
+            return last_price, last_price, last_price
+        except Exception:
+            mock = os.getenv("MOCK_BTC_PRICE", "").strip()
+            if mock:
+                try:
+                    p = float(mock)
+                    if p > 0:
+                        self.last_warnings.append("BTC 价格使用 MOCK_BTC_PRICE。")
+                        return p, p, p
+                except Exception:
+                    pass
+            raise RuntimeError(f"BTC 实时价格获取失败（OKX/CoinGecko/Mock）: {last_error}") from last_error
 
     def _fetch_macro_changes(self) -> Tuple[float, float]:
         oil_last, oil_prev = self._stooq_last_prev("CL.F")
@@ -222,7 +249,13 @@ class MacroDecisionEngine:
         ma4 = ma20_4h
         ma1 = ma20_1d
         if px is None or ma4 is None or ma1 is None:
-            px, ma4, ma1 = self._fetch_btc_realtime_and_ma()
+            try:
+                px, ma4, ma1 = self._fetch_btc_realtime_and_ma()
+            except Exception as exc:
+                self.last_warnings.append(str(exc))
+                px = self._safe_float(px, 0.0)
+                ma4 = self._safe_float(ma4, px)
+                ma1 = self._safe_float(ma1, px)
 
         oil = oil_price_change_pct
         dxy = dxy_change_pct

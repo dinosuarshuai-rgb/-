@@ -685,7 +685,7 @@ class MacroAgent:
             score=0.0,
             tier=1,
             status="pending",
-            reason="未抓取到有效新闻",
+            reason="未发现符合条件的实时新闻",
             translated_title=None,
             source="none",
             timestamp=now,

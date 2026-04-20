@@ -48,9 +48,9 @@ def _render_table(headers: List[str], rows: List[List[str]]) -> str:
     return "\n".join(lines)
 
 
-def _render_intel_list(items: List[NewsItem], limit: int = 6) -> str:
+def _render_intel_list(items: List[NewsItem], limit: int = 6, empty_message: str = "未发现符合条件的实时新闻") -> str:
     if not items:
-        return "- 无"
+        return f"- {empty_message}"
     lines = []
     for i in items[:limit]:
         title = i.translated_title or i.title
@@ -214,13 +214,13 @@ def generate_markdown_report(
     lines.append("## 背景参考（已硬剔除：发布时间 > 12 小时，不参与评分）")
     lines.append("")
     lines.append("### 第一层背景")
-    lines.append(_render_intel_list(intel.tier1_background))
+    lines.append(_render_intel_list(intel.tier1_background, empty_message="无"))
     lines.append("")
     lines.append("### 第二层背景")
-    lines.append(_render_intel_list(intel.tier2_background))
+    lines.append(_render_intel_list(intel.tier2_background, empty_message="无"))
     lines.append("")
     lines.append("### 第三层背景")
-    lines.append(_render_intel_list(intel.tier3_background))
+    lines.append(_render_intel_list(intel.tier3_background, empty_message="无"))
     lines.append("")
 
     if warnings:

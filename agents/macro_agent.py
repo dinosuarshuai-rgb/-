@@ -481,6 +481,7 @@ class MacroAgent:
         self, query: str, macro: MacroFactors, now: Optional[datetime] = None
     ) -> Tuple[GeoSignal, FinalDecision, MacroIntel]:
         now = _to_utc(now) if now else _utcnow()
+        print(f"ACTUAL QUERY USED: {query}")
 
         tier1_items = self._tier1_radar(query)
         tier2_items = self._tier2_core(query)

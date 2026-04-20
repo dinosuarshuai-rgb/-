@@ -194,7 +194,7 @@ def push_test() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["fast_scan", "full_analysis", "sentinel", "push_test"], default="full_analysis")
-    parser.add_argument("--query", default="Iran geopolitical news latest escalation sanctions oil shipping")
+    parser.add_argument("--query", default="Iran Israel conflict")
     parser.add_argument("--interval", type=int, default=300)
     parser.add_argument("--push", action="store_true")
     parser.add_argument("--once", action="store_true")

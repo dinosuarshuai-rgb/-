@@ -509,13 +509,13 @@ class DeepSeekClient:
             payload.append({"url": url, "source": source, "text": _safe_truncate(text, 9000)})
 
         prompt = (
-            "你是顶级宏观分析师，负责云端哨兵系统的 Level 5 风险信号捕捉。\n"
+            "你是顶级宏观分析师，负责云端哨兵系统的地缘动态情报提取。\n"
             "你将收到来自若干顶级信源页面的原始网页文本（可能包含杂质）。\n"
-            "目标：只筛选出过去 24 小时内与以下主题强相关且足够“硬”的信号：\n"
+            "目标：提取过去 36 小时内与以下主题强相关的实时动态（包括外交辞令、官方表态、军事部署进展、制裁与反制等）。\n"
             "- 伊朗、以色列\n"
             "- 美军/美国部署（航母战斗群、空袭、增兵、军事基地、舰队）\n"
             "- 原油/油轮/航运/霍尔木兹海峡（供应中断、封锁、遇袭、保险/运费飙升）\n"
-            "只保留 Level 5 级别硬货：应当能显著影响全球风险偏好或油价预期。\n"
+            "不要只盯“战争爆发”级别的大事件：只要与主题相关，都请提取出来，交由老板自行判断严重程度。\n"
             "输出必须为严格 JSON：\n"
             "{\"items\":[{\"title\":string,\"source\":string,\"url\":string,\"published_at\":string|null,\"why\":string}],\"level\":number,\"summary\":string}\n"
             f"要求：items 最多 {int(max_items)} 条；published_at 统一 ISO8601 UTC（如 2026-04-22T08:30:00Z），无法判断则为 null。\n"
@@ -608,8 +608,8 @@ class DeepSeekClient:
 class MacroAgentConfig(BaseModel):
     dotenv_path: str = ".env"
     max_results_per_tier: int = Field(default=5, ge=1, le=20)
-    fetch_last_hours: float = Field(default=24.0, gt=0)
-    scoring_cutoff_hours: float = Field(default=12.0, gt=0)
+    fetch_last_hours: float = Field(default=36.0, gt=0)
+    scoring_cutoff_hours: float = Field(default=36.0, gt=0)
     half_life_hours: float = Field(default=3.0, gt=0)
     enable_deepseek: bool = True
     oil_jump_threshold: float = 1.0
@@ -792,7 +792,38 @@ class MacroAgent:
                         content=None,
                     )
                 )
-            return self._unique_by_url(out)
+            extracted = self._unique_by_url(out)
+            if extracted:
+                return extracted
+
+            noise: List[NewsItem] = []
+            for p in pages:
+                base_url = str(p.get("url") or "").strip()
+                html = str(p.get("html") or "")
+                source = str(p.get("source") or "").strip() or TavilyClient._guess_source_from_url(base_url)
+                dt_list = _extract_iso_datetimes(html)
+                best_dt = max(dt_list) if dt_list else None
+                for title, link in _extract_headlines_from_html(html, base_url):
+                    frag = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60]
+                    url = link or base_url
+                    if frag and url:
+                        url = f"{url}#{frag}"
+                    noise.append(
+                        NewsItem(
+                            title=title,
+                            url=url or base_url,
+                            source=f"市场杂讯/{source}",
+                            published_at=best_dt,
+                            fetched_at=now,
+                            timestamp_origin="inferred" if best_dt is not None else "fetched",
+                            content=None,
+                        )
+                    )
+                    if len(noise) >= 5:
+                        break
+                if len(noise) >= 5:
+                    break
+            return self._unique_by_url(noise)[:5]
 
         candidates: List[NewsItem] = []
         keywords = [

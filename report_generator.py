@@ -211,7 +211,7 @@ def generate_markdown_report(
     lines.append(_render_intel_list(intel.tier3))
     lines.append("")
 
-    lines.append("## 背景参考（已硬剔除：发布时间 > 12 小时，不参与评分）")
+    lines.append("## 背景参考（已硬剔除：发布时间 > 36 小时，不参与评分）")
     lines.append("")
     lines.append("### 第一层背景")
     lines.append(_render_intel_list(intel.tier1_background, empty_message="无"))
